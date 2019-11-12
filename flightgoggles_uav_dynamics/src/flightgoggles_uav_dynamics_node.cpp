@@ -3,6 +3,7 @@
  * @author Ezra Tal
  * @author Winter Guerra
  * @author Varun Murali
+ * @Ep Pravitra (Georgia Institute of Technology)
  * @brief Implementation of the UAV dynamics and imu simulation
  */
 
@@ -155,8 +156,10 @@ initPose_(7,0)
   ////////////////// Init subscribers and publishers
   // Allow for up to 100ms sim time buffer of outgoing IMU messages. 
   // This should improve IMU integration methods on slow client nodes (see issue #63).
-  imuPub_ = node_.advertise<sensor_msgs::Imu>("/uav/sensors/imu", 96);  
-  inputCommandSub_ = node_.subscribe("/uav/input/rateThrust", 1, &Uav_Dynamics::inputCallback, this);
+  imuPub_   = node_.advertise<sensor_msgs::Imu>("/uav/sensors/imu", 96); 
+  statePub_ = node_.advertise<nav_msgs::Odometry>("/uav/state", 96); 
+  inputRateThrustCommandSub_   = node_.subscribe("/uav/input/rateThrust", 1, &Uav_Dynamics::inputRateThrustCallback, this);
+  inputTorqueThrustCommandSub_ = node_.subscribe("/uav/input/torqueThrust", 1, &Uav_Dynamics::inputTorqueThrustCallback, this);
   collisionSub_ = node_.subscribe("/uav/collision", 1, &Uav_Dynamics::collisionCallback, this);
   frameRateSub_ = node_.subscribe("/uav/camera/debug/fps", 1, &Uav_Dynamics::fpsCallback, this);
 
@@ -190,6 +193,9 @@ void Uav_Dynamics::fpsCallback(std_msgs::Float32::Ptr msg) {
  * @param event Wall clock timer event
  */
 void Uav_Dynamics::simulationLoopTimerCallback(const ros::WallTimerEvent& event){
+    int i;
+    double momentThrust[4];
+  
   // Step the time forward
   if (useSimTime_){
     currentTime_ += ros::Duration(dt_secs);
@@ -213,11 +219,33 @@ void Uav_Dynamics::simulationLoopTimerCallback(const ros::WallTimerEvent& event)
   // Only propagate simulation after have received input message
   if (armed_) {
 
-    lpf_.proceedState(imuMeasurement_.angular_velocity, dt_secs);
+    switch (pid_.control_mode){
+        case CONTROL_MODE_RATE_THRUST:
+        default:
 
-    pid_.controlUpdate(lastCommandMsg_->angular_rates, lpf_.filterState_,
-                       lpf_.filterStateDer_, angAccCommand_, dt_secs);
-    computeMotorSpeedCommand();
+            lpf_.proceedState(imuMeasurement_.angular_velocity, dt_secs);
+
+            pid_.controlUpdate(lastRateThrustCommandMsg_->angular_rates, lpf_.filterState_,
+                           lpf_.filterStateDer_, angAccCommand_, dt_secs);
+
+            for (i=0;i<3;i++){
+              momentThrust[i] = vehicleInertia_[i]*angAccCommand_[i];
+            }
+            momentThrust[3]   = lastRateThrustCommandMsg_->thrust.z;
+
+            break;
+
+        case CONTROL_MODE_TORQUE_THRUST:
+
+            momentThrust[0] = lastTorqueThrustCommandMsg_->torque.x;
+            momentThrust[1] = lastTorqueThrustCommandMsg_->torque.y;
+            momentThrust[2] = lastTorqueThrustCommandMsg_->torque.z;
+            momentThrust[3] = lastTorqueThrustCommandMsg_->thrust.z;
+            break;
+    }
+
+    computeMotorSpeedCommand(momentThrust);
+ 
     proceedState();
     imu_.getMeasurement(imuMeasurement_, angVelocity_, specificForceBodyFrame_, currentTime_);
     imuPub_.publish(imuMeasurement_);
@@ -236,11 +264,19 @@ void Uav_Dynamics::simulationLoopTimerCallback(const ros::WallTimerEvent& event)
 }
 
 /**
- * inputCallback to handle incoming rate thrust message
+ * inputRateThrustCallback to handle incoming rate thrust message
  * @param msg rateThrust message from keyboard/ joystick controller
  */
-void Uav_Dynamics::inputCallback(mav_msgs::RateThrust::Ptr msg){
-	lastCommandMsg_ = msg;
+void Uav_Dynamics::inputRateThrustCallback(mav_msgs::RateThrust::Ptr msg){
+	lastRateThrustCommandMsg_ = msg;
+	if (!armed_ && ((currentTime_.toSec() - timeLastReset_.toSec()) > resetTimeout_)) { 
+		if (msg->thrust.z >= (minArmingThrust_))
+			armed_ = true;
+	}
+}
+
+void Uav_Dynamics::inputTorqueThrustCallback(mav_msgs::TorqueThrust::Ptr msg){
+	lastTorqueThrustCommandMsg_ = msg;
 	if (!armed_ && ((currentTime_.toSec() - timeLastReset_.toSec()) > resetTimeout_)) { 
 		if (msg->thrust.z >= (minArmingThrust_))
 			armed_ = true;
@@ -258,13 +294,7 @@ void Uav_Dynamics::collisionCallback(std_msgs::Empty::Ptr msg){
 /**
  * computeMotorSpeedCommand computes the current motor speed
  */
-void Uav_Dynamics::computeMotorSpeedCommand(void){
-  double momentThrust[4] = {
-    vehicleInertia_[0]*angAccCommand_[0],
-    vehicleInertia_[1]*angAccCommand_[1],
-    vehicleInertia_[2]*angAccCommand_[2],
-    lastCommandMsg_->thrust.z
-  };
+void Uav_Dynamics::computeMotorSpeedCommand(double momentThrust[4]){
 
   double motorSpeedsSquared[4] = {
     momentThrust[0]/(4*momentArm_*thrustCoeff_)+ -momentThrust[1]/(4*momentArm_*thrustCoeff_)+ -momentThrust[2]/(4*torqueCoeff_)+ momentThrust[3]/(4*thrustCoeff_),
@@ -434,7 +464,31 @@ void Uav_Dynamics::publishState(void){
   transform.child_frame_id = "uav/imu";
 
   tfPub_.sendTransform(transform);
+
+  //---also send state as nav_msgs odometry----
+  nav_msgs::Odometry odom;
+  odom.header.stamp = currentTime_;
+  odom.header.frame_id = "world";
+  odom.pose.pose.position.x = position_[0];
+  odom.pose.pose.position.y = position_[1];
+  odom.pose.pose.position.z = position_[2];
+
+  odom.twist.twist.linear.x = velocity_[0];
+  odom.twist.twist.linear.y = velocity_[1];
+  odom.twist.twist.linear.z = velocity_[2];
+
+  odom.pose.pose.orientation.x = attitude_[0];
+  odom.pose.pose.orientation.y = attitude_[1];
+  odom.pose.pose.orientation.z = attitude_[2];
+  odom.pose.pose.orientation.w = attitude_[3];
+
+  odom.twist.twist.angular.x   = angVelocity_[0];
+  odom.twist.twist.angular.y   = angVelocity_[1];
+  odom.twist.twist.angular.z   = angVelocity_[2];
+
+  statePub_.publish(odom);
 }
+
 
 /**
  * Constructor for Uav_Imu
@@ -540,6 +594,10 @@ void Uav_LowPassFilter::resetState(void){
  * Constructor for the Uav Pid
  */
 Uav_Pid::Uav_Pid(){
+  if (!ros::param::get("/uav/flightgoggles_pid/control_mode", control_mode)) { 
+      std::cout << "Did not get control mode from the params, defaulting to CONTROL_MODE_RATE_THRUST" << std::endl;
+  }
+
   if (!ros::param::get("/uav/flightgoggles_pid/gain_p_roll", propGain_[0])) { 
       std::cout << "Did not get the gain p roll from the params, defaulting to 9.0" << std::endl;
   }

@@ -18,14 +18,19 @@
 
 // Messages
 #include <mav_msgs/RateThrust.h>
+#include <mav_msgs/TorqueThrust.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <sensor_msgs/Imu.h>
+#include <nav_msgs/Odometry.h>
 #include <std_msgs/Float32.h>
 #include <rosgraph_msgs/Clock.h>
 
 #include <sstream>
 #include <random>
+
+#define CONTROL_MODE_RATE_THRUST 0
+#define CONTROL_MODE_TORQUE_THRUST 1
 
 class Uav_Imu {
     // This class can be extended if IMU noise is needed etc.
@@ -74,7 +79,7 @@ class Uav_Pid {
         void controlUpdate(geometry_msgs::Vector3 & command, double * curval,
                       double * curder, double * out, double dt);
         void resetState(void);
-
+        int control_mode    = CONTROL_MODE_RATE_THRUST;  //0-rate-thrust,1 torque thrust
     private:
         /// @name PID Controller Parameters
         //@{
@@ -105,12 +110,14 @@ class Uav_Dynamics {
         /// @name Publishers
         //@{
         ros::Publisher imuPub_;
+        ros::Publisher statePub_;
         ros::Publisher clockPub_;
         //@}
 
         /// @name Subscribers
         //@{
-        ros::Subscriber inputCommandSub_;
+        ros::Subscriber inputRateThrustCommandSub_;
+        ros::Subscriber inputTorqueThrustCommandSub_;
         ros::Subscriber collisionSub_;
 	    ros::Subscriber frameRateSub_;
         //@}
@@ -123,14 +130,16 @@ class Uav_Dynamics {
         /// @name Callbacks
         //@{
         void simulationLoopTimerCallback(const ros::WallTimerEvent& event);
-        void inputCallback(mav_msgs::RateThrust::Ptr msg);
+        void inputRateThrustCallback(mav_msgs::RateThrust::Ptr msg);
+        void inputTorqueThrustCallback(mav_msgs::TorqueThrust::Ptr msg);
         void collisionCallback(std_msgs::Empty::Ptr msg);
 	    void fpsCallback(std_msgs::Float32::Ptr msg);
         //@}
 
         /// @name Storage Variables
         //@{
-        mav_msgs::RateThrust::Ptr lastCommandMsg_;
+        mav_msgs::RateThrust::Ptr lastRateThrustCommandMsg_;
+        mav_msgs::TorqueThrust::Ptr lastTorqueThrustCommandMsg_;
         sensor_msgs::Imu imuMeasurement_;
         ros::Time currentTime_;
         ros::Time timeLastReset_;
@@ -148,7 +157,7 @@ class Uav_Dynamics {
 
     private:
 
-        void computeMotorSpeedCommand(void);
+        void computeMotorSpeedCommand(double momentThrust[4]);
         void proceedState(void);
         void resetState(void);
         void publishState(void);
