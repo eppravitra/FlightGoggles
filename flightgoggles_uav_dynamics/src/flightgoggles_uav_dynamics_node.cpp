@@ -232,9 +232,9 @@ void Uav_Dynamics::simulationLoopTimerCallback(const ros::WallTimerEvent& event)
             pid_.controlUpdate(lastRateThrustCommandMsg_->angular_rates, lpf_.filterState_,
                            lpf_.filterStateDer_, angAccCommand_, dt_secs);
 
-            for (i=0;i<3;i++){
-              momentThrust[i] = vehicleInertia_[i]*angAccCommand_[i];
-            }
+            momentThrust[0] = Ixx_*angAccCommand_[0];
+            momentThrust[1] = Iyy_*angAccCommand_[1];
+            momentThrust[2] = Izz_*angAccCommand_[2];            
             momentThrust[3]   = lastRateThrustCommandMsg_->thrust.z;
 
             break;
@@ -298,15 +298,8 @@ void Uav_Dynamics::collisionCallback(std_msgs::Empty::Ptr msg){
 /**
  * computeMotorSpeedCommand computes the current motor speed
  */
-void Uav_Dynamics::computeMotorSpeedCommand(void){
-  double momentThrust[4] = {
-    Ixx*angAccCommand_[0],
-    Iyy*angAccCommand_[1],
-    Izz*angAccCommand_[2],
-    lastCommandMsg_->thrust.z
-  };
 void Uav_Dynamics::computeMotorSpeedCommand(double momentThrust[4]){
-
+  
   double motorSpeedsSquared[4] = {
     momentThrust[0]/(4*momentArm_*thrustCoeff_)+ -momentThrust[1]/(4*momentArm_*thrustCoeff_)+ -momentThrust[2]/(4*torqueCoeff_)+ momentThrust[3]/(4*thrustCoeff_),
     momentThrust[0]/(4*momentArm_*thrustCoeff_)+  momentThrust[1]/(4*momentArm_*thrustCoeff_)+  momentThrust[2]/(4*torqueCoeff_)+ momentThrust[3]/(4*thrustCoeff_),
