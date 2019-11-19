@@ -33,7 +33,7 @@ flightgoggles_lpf:
     gain_q: 266.572976289502
 
 flightgoggles_pid:
-    control_mode: 0
+    control_mode: 1
     #0-rate-thrust,1 torque thrust
     gain_p_roll: 9.0
     gain_i_roll: 3.0
