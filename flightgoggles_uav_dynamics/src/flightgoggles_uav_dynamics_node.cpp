@@ -356,9 +356,13 @@ void Uav_Dynamics::proceedState(void){
 
 
   double M[3] = {momentArm_*thrustCoeff_*(pow(propSpeed_[0],2.) +pow(propSpeed_[1],2.) -pow(propSpeed_[2],2.) -pow(propSpeed_[3],2.)),
-                 momentArm_*thrustCoeff_*(-pow(propSpeed_[0],2.) +pow(propSpeed_[1],2.) +pow(propSpeed_[2],2.) -pow(propSpeed_[3],2.)),
+                 momentArm_*thrustCoeff_*(-pow(propSpeed_[0],2.) +pow(propSpeed_[1],2.) +pow(propSpeed_[2],2.) -pow(propSpeed_[3],2.)) /*- 0.1*/,
                  torqueCoeff_*(-pow(propSpeed_[0],2.) +pow(propSpeed_[1],2.) -pow(propSpeed_[2],2.) +pow(propSpeed_[3],2.))};
 
+/*
+  M[0] *= 0.6;
+  M[1] *= 0.6; 
+*/
   double gamma = Ixx_*Izz_ - Ixz_*Ixz_;
 
   double angAccel[3];
@@ -385,6 +389,8 @@ void Uav_Dynamics::proceedState(void){
 
   double specificThrust = thrustCoeff_*(pow(propSpeed_[0],2.) + pow(propSpeed_[1],2.) + pow(propSpeed_[2],2.) + pow(propSpeed_[3],2.))/vehicleMass_;
   
+  //specificThrust *=0.6;
+   
   double speed = sqrt(pow(velocity_[0],2.) + pow(velocity_[1],2.) + pow(velocity_[2],2.));
   if (includeDrag_ && (speed > 0.)){
     double drag = dragCoeff_*pow(speed,2.);
